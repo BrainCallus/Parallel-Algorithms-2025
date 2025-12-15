@@ -1,10 +1,25 @@
 #include <iostream>
 #include "quick_sort.cpp"
 
+bool validateSorted(PSeq<int> &actual, PSeq<int> &expected) {
+    assert(is_sorted(expected));
+    if (actual.size() != expected.size()) {
+        return false;
+    }
+
+    for (int i = 0; i < expected.size(); ++i) {
+        if (actual[i] != expected[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 LL runTimed(QSortingFunc &quickSort, PSeq<int> &arr) {
-    const auto start = std::chrono::high_resolution_clock::now();
+    const auto start{std::chrono::high_resolution_clock::now()};
     quickSort(arr);
-    const auto end = std::chrono::high_resolution_clock::now();
+    const auto end{std::chrono::high_resolution_clock::now()};
     return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
 }
 
@@ -12,11 +27,12 @@ std::function<LL(PSeq<int> &)> runTimedF(QSortingFunc &quickSort) {
     return [&quickSort](PSeq<int> &arr) { return runTimed(quickSort, arr); };
 }
 
-std::function<LL(PSeq<int> &)> runWithResultsF(QSortingFunc &quickSort, PSeq<RunResult> &results,
+std::function<LL(PSeq<int> &)> runWithResultsF(QSortingFunc &quickSort, PSeq<int> &expectedSorted,
+                                               PSeq<RunResult> &results,
                                                std::function<RunResult(LL, bool)> &resBuilder) {
-    return [&quickSort, &results, resBuilder](PSeq<int> &arr) {
+    return [&quickSort, &expectedSorted, &results, resBuilder](PSeq<int> &arr) {
         LL t = runTimed(quickSort, arr);
-        results.push_back(resBuilder(t, is_sorted(arr)));
+        results.push_back(resBuilder(t, validateSorted(arr, expectedSorted)));
         return t;
     };
 }
@@ -33,16 +49,17 @@ LL approximateRun(const PSeq<int> &sample, const int &nTrials,
 }
 
 
-int findOptimalBlock(const int maxSize, const int startExp = 4, const int nTrials = 3) {
-    PSeq<int> sample = randIntegersSample(maxSize);
+int findOptimalBlock(const int maxSize, std::function<void(PSeq<int> &, const int &)> qsortInstance,
+                     const int startExp = 4, const int nTrials = 3) {
+    PSeq<int> sample = generateUniformUnbounded(maxSize);
     std::pair<int, LL> bestTime = {-1, LONG_LONG_MAX};
 
     std::cout << "Started trials to search for the optimal block size" << std::endl;
 
     int curV = startExp;
     const int maxBs = maxSize / 2;
-    const std::function<QSortingFunc(int)> fBuilder = [](int v) {
-        return [v](PSeq<int> &a) { parallelQuickSort(a, v); };
+    const std::function<QSortingFunc(int)> fBuilder = [qsortInstance](int v) {
+        return [v, qsortInstance](PSeq<int> &a) { qsortInstance(a, v); };
     };
     for (int i = 0; curV < maxBs;) {
         QSortingFunc par = fBuilder(curV);
@@ -95,76 +112,137 @@ PSeq<RunResult> runSequential(PSeq<int> &sample, const int &nTrials) {
     std::function<RunResult(LL, bool)> f = [&lastSortedSize](LL dur, bool isCorrect) {
         return RunResult("Sequential", 1, lastSortedSize, dur, isCorrect);
     };
-    auto g = runWithResultsF(quickSort, results, f);
+    auto sortedSample = sample;
+    std::sort(sortedSample.begin(), sortedSample.end());
+    auto g = runWithResultsF(quickSort, sortedSample, results, f);
     approximateRun(sample, nTrials, g);
     return results;
 }
 
-PSeq<RunResult> runParallel(PSeq<int> &sample, const int &nTrials, const int blockSize) {
+PSeq<RunResult> runParallel(PSeq<int> &sample, const int &nTrials, const int blockSize,
+                            std::function<void(PSeq<int> &, const int &)> qsortInstance, std::string name) {
     PSeq<RunResult> results;
-    QSortingFunc quickSort = [blockSize](PSeq<int> &a) { parallelQuickSort(a, blockSize); };
-    std::function<RunResult(LL, bool)> f = [&blockSize](const LL dur, const bool isCorrect) {
+    QSortingFunc quickSort = [blockSize, qsortInstance](PSeq<int> &a) { qsortInstance(a, blockSize); };
+    std::function<RunResult(LL, bool)> f = [&blockSize, name](const LL dur, const bool isCorrect) {
         int curThreads = parlay::num_workers();
-        return RunResult("Parallel", curThreads, blockSize, dur, isCorrect);
+        return RunResult(name, curThreads, blockSize, dur, isCorrect);
     };
-    const auto g = runWithResultsF(quickSort, results, f);
+    auto sortedSample = sample;
+    std::sort(sortedSample.begin(), sortedSample.end());
+    const auto g = runWithResultsF(quickSort, sortedSample, results, f);
     approximateRun(sample, nTrials, g);
     return results;
 }
 
-LL foldToAvg(PSeq<RunResult> &results) {
-    PSeq<LL> mapped = parlay::map(results, [](RunResult r) { return r.duration; });
-    return std::reduce(mapped.begin(), mapped.end(), 0,
-                       [&](const LL a, const LL b) { return a + b; }) / mapped.size();
-}
-
-void printResults(PSeq<RunResult> &seq, PSeq<RunResult> &par) {
-    assert(seq.size() == par.size() && seq.size() > 0);
-    std::cout << "| # | Name | Threads | BlockSize | Time (ms) | Correct | " << std::endl;
-    std::cout << "|:-:|:-:|:-:|:-:|:-:|:-:|" << std::endl;
-    auto indices = parlay::tabulate(seq.size(), [](int i) { return i + 1; });
-    auto zipped = zip(indices, seq, par);
-    for (std::tuple<int, RunResult, RunResult> iterRes: zipped) {
-        int it = std::get<0>(iterRes);
-        std::cout << "| " << it << std::get<1>(iterRes).asMdRow() << std::endl;
-        std::cout << "| " << it << std::get<2>(iterRes).asMdRow() << std::endl;
-    }
-    const LL r1 = foldToAvg(seq);
-    const LL r2 = foldToAvg(par);
-    const double avg = r1 / (double) r2;
-    std::cout << "| avg | Sequential | " << r1 << " | Parallel | " << r2 << " | " << avg << " |" <<
-            std::endl;
-    std::cout << "**Parallel acceleration: " << avg << "**" << std::endl;
-}
-
-void runCompetition(const int &sz, const int &nTrials, const int &bs,
-                    std::function<PSeq<int>(int)> &sampleGen, std::string annotation = "") {
+void runCompetition(const int &sz, const int &nTrials, const int &bs, const int &bs2,
+                    const std::function<PSeq<int>(int)> &sampleGen, const std::string &annotation = "") {
     PSeq<int> sample = sampleGen(sz);
-    std::cout << "### Run on " << (annotation.length() ? annotation : "sample") << std::endl;
+
+    std::cout << "### Run on " << (annotation.empty() ? "sample" : annotation) << std::endl;
     std::cout << "```" << std::endl;
     std::cout << "Sequential trials started\n" << std::endl;
     PSeq<RunResult> sequentialResults = runSequential(sample, nTrials);
-    std::cout << "Parallel trials started" << std::endl;
-    PSeq<RunResult> parallelResults = runParallel(sample, nTrials, bs);
+    std::cout << "Parallel trials started (all parallelized)" << std::endl;
+    const PSeq<RunResult> parallelResults = runParallel(sample, nTrials, bs, parallelQuickSortParFull,
+                                                        "Parallel. All parallelized");
+    std::cout << "Parallel trials started (sequential filter)" << std::endl;
+    const PSeq<RunResult> parallelResultsN = runParallel(sample, nTrials, bs, parallelQuickSortSeqFilter,
+                                                         "Parallel. Sequential filter");
+
+    std::cout << "Parallel trials started (only fork)" << std::endl;
+    const PSeq<RunResult> parallelResultsF = runParallel(sample, nTrials, bs2, parallelQuickSortForkOnly,
+                                                         "Parallel. Only fork");
+
     std::cout << "```" << std::endl;
-    printResults(sequentialResults, parallelResults);
+    PSeq<PSeq<RunResult> > all{sequentialResults, parallelResults, parallelResultsN, parallelResultsF};
+
+    printResults(all);
     std::cout << "\n" << std::endl;
 }
 
 void benchmarks() {
-    const int nTrials = 5;
-    const int sz = 1'0000'0000;
-    PSeq<int> sample = randIntegersSample(sz);
+    constexpr int nTrials = 5;
+    constexpr int sz = 1'0000'0000;
+    PSeq<int> sample = generateUniformUnbounded(sz);
 
     std::cout << "```" << std::endl;
-    const int bs = findOptimalBlock(sz);
+    const int bs = findOptimalBlock(sz, parallelQuickSortParFull);
+    const int bs2 = findOptimalBlock(sz, parallelQuickSortForkOnly);
     std::cout << "```" << std::endl;
 
-    runCompetition(sz, nTrials, bs, randIntegersSample, "random integers from [INT_MIN; INT_MAX]");
-    runCompetition(sz, nTrials, bs, randConstSample, "the same values equal to integer from [INT_MIN; INT_MAX]");
-    runCompetition(sz, nTrials, bs, sortedSample, "already sorted distinct values");
-    runCompetition(sz, nTrials, bs, reversedSample, "reversed sorted sequence of distinct integers");
-    runCompetition(sz, nTrials, bs, shuffledRangeSample, "shuffled sequence of distinct integers");
+    runCompetition(sz, nTrials, bs, bs2, generateUniformUnbounded, "random integers from [INT_MIN; INT_MAX]");
+    runCompetition(sz, nTrials, bs, bs2, randConstSample, "the same values equal to integer from [INT_MIN; INT_MAX]");
+    runCompetition(sz, nTrials, bs, bs2, sortedSample, "already sorted distinct values");
+    runCompetition(sz, nTrials, bs, bs2, reversedSample, "reversed sorted sequence of distinct integers");
+
+    runCompetition(sz, nTrials, bs, bs2, generate_uniform(-1e8, 1e8), "Uniform; 10^8 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_uniform(-1e6, 1e6), "Uniform; 10^6 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_uniform(-1e4, 1e4), "Uniform; 10^4 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_uniform(-1e2, 1e2), "Uniform; 10^2 unique");
+
+    runCompetition(sz, nTrials, bs, bs2, generate_student(1, 1e8), "StudentT ν=1(cauchy); 10^8 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_student(1, 1e6), "StudentT ν=1(cauchy); 10^6 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_student(1, 1e4), "StudentT ν=1(cauchy); 10^4 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_student(1, 1e2), "StudentT ν=1(cauchy); 10^2 unique");
+
+    runCompetition(sz, nTrials, bs, bs2, generate_student(1000, 1e8), "StudentT ν=1000(normal); 10^8 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_student(1000, 1e6), "StudentT ν=1000(normal); 10^6 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_student(1000, 1e4), "StudentT ν=1000(normal); 10^4 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_student(1000, 1e2), "StudentT ν=1000(normal); 10^2 unique");
+
+    runCompetition(sz, nTrials, bs, bs2, generate_log_normal(2, 1e8), "LogNormal σ=2; 10^8 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_log_normal(2, 1e6), "LogNormal σ=2; 10^6 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_log_normal(2, 1e4), "LogNormal σ=2; 10^4 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_log_normal(2, 1e2), "LogNormal σ=2; 10^2 unique");
+
+    runCompetition(sz, nTrials, bs, bs2, generate_log_normal(0.3, 1e8), "LogNormal σ=0.3; 10^8 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_log_normal(0.3, 1e6), "LogNormal σ=0.3; 10^6 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_log_normal(0.3, 1e4), "LogNormal σ=0.3; 10^4 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_log_normal(0.3, 1e2), "LogNormal σ=0.3; 10^2 unique");
+
+    PSeq<double> intervals1 = {0, 7, 8, 10};
+    PSeq<double> weights1 = {10, 80, 10};
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(1, 1e8, intervals1, weights1),
+                   "\"Paretto\" {10, 80, 10}, 1 mode; 10^8 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(5, 1e8, intervals1, weights1),
+                   "\"Paretto\" {10, 80, 10}, 5 modes; 10^8 unique");
+
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(1, 1e6, intervals1, weights1),
+                   "\"Paretto\" {10, 80, 10}, 1 mode; 10^6 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(5, 1e6, intervals1, weights1),
+                   "\"Paretto\" {10, 80, 10}, 5 modes; 10^6 unique");
+
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(1, 1e4, intervals1, weights1),
+                   "\"Paretto\" {10, 80, 10}, 1 mode; 10^4 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(5, 1e4, intervals1, weights1),
+                   "\"Paretto\" {10, 80, 10}, 5 modes; 10^4 unique");
+
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(1, 1e2, intervals1, weights1),
+                   "\"Paretto\" {10, 80, 10}, 1 mode; 10^2 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(5, 1e2, intervals1, weights1),
+                   "\"Paretto\" {10, 80, 10}, 5 modes; 10^2 unique");
+
+    PSeq<double> intervals2 = {0, 2, 3, 7, 8, 10};
+    PSeq<double> weights2 = {8, 40, 6, 41, 7};
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(1, 1e8, intervals2, weights2),
+                   "\"Paretto\" {8, 40, 6, 41, 7}, 1 mode; 10^8 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(5, 1e8, intervals2, weights2),
+                   "\"Paretto\" {8, 40, 6, 41, 7}, 5 modes; 10^8 unique");
+
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(1, 1e6, intervals2, weights2),
+                   "\"Paretto\" {8, 40, 6, 41, 7}, 1 mode; 10^6 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(5, 1e6, intervals2, weights2),
+                   "\"Paretto\" {8, 40, 6, 41, 7}, 5 modes; 10^6 unique");
+
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(1, 1e4, intervals2, weights2),
+                   "\"Paretto\" {8, 40, 6, 41, 7}, 1 mode; 10^4 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(5, 1e4, intervals2, weights2),
+                   "\"Paretto\" {8, 40, 6, 41, 7}, 5 modes; 10^4 unique");
+
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(1, 1e2, intervals2, weights2),
+                   "Paretto {8, 40, 6, 41, 7}, 1 mode; 10^2 unique");
+    runCompetition(sz, nTrials, bs, bs2, generate_piecewise(5, 1e2, intervals2, weights2),
+                   "Paretto {8, 40, 6, 41, 7}, 5 modes; 10^2 unique");
 }
 
 int main() {

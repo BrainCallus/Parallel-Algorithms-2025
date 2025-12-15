@@ -1,8 +1,7 @@
 cmake_minimum_required(VERSION 3.28)
 project(Parallel_Algorithms_2025 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
@@ -14,9 +13,9 @@ FetchContent_MakeAvailable(parlaylib)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -O3")
 
-add_executable(Parallel_Algorithms_2025 qsort/quick_sort.cpp
-        qsort/utils.cpp
-        qsort/runs.cpp)
+add_executable(Parallel_Algorithms_2025 # qsort/runs.cpp
+        bfs/runs.cpp
+)
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU" AND WIN32)
     message(STATUS "Applying MinGW linker workaround: allow multiple definitions")
