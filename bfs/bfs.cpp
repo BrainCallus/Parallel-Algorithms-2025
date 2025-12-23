@@ -53,21 +53,18 @@ class SequentialBfsImplicitVisited : public BFS {
 public:
     void bfs(const SimpleGraph &g, const CoordinateRecord &src) override {
         assignDistances(g.matrix.size());
-        StdVector<bool> visited(g.matrix.size(), false);
         const int srcId = g.normalize(src);
 
         std::queue<int> q;
-        visited[srcId] = true;
         distances[srcId] = 0;
         q.push(srcId);
         while (!q.empty()) {
-            int vId = q.front();
+            const int vId = q.front();
             q.pop();
 
             for (CoordinateRecord coord_u: g.matrix[vId]) {
-                int uId = g.normalize(coord_u);
-                if (!visited[uId]) {
-                    visited[uId] = true;
+                const int uId = g.normalize(coord_u);
+                if (distances[uId] < 0) {
                     distances[uId] = distances[vId] + 1;
                     q.push(uId);
                 }
@@ -143,7 +140,7 @@ public:
     void bfs(const SimpleGraph &g, const CoordinateRecord &src) override {
         assignDistances(g.matrix.size());
         StdVector<std::atomic<bool> > visited(g.matrix.size());
-        const int srcId = g.normalize(src);
+        int srcId = g.normalize(src);
 
         PSeq<int> frontier;
         PSeq<int> frontierDegs;
@@ -158,8 +155,8 @@ public:
 
 
             parlay::parallel_for(0, frontier.size(), [&](const int i) {
-                const int vId = frontier[i];
-                const int newDist = distances[vId] + 1;
+                int vId = frontier[i];
+                int newDist = distances[vId] + 1;
                 int j = 0;
                 for (CoordinateRecord coordU: g.matrix[vId]) {
                     int uId = g.normalize(coordU);
@@ -174,8 +171,8 @@ public:
                 }
             }, blockSize);
 
-            frontier = parlay::filter(newFrontier, [&](const int i) { return i >= 0; });
-            frontierDegs = parlay::filter(frontierDegs, [&](const int i) { return i >= 0; });
+            frontier = parlay::filter(newFrontier, [&](int i) { return i >= 0; });
+            frontierDegs = parlay::filter(frontierDegs, [&](int i) { return i >= 0; });
         }
     }
 };

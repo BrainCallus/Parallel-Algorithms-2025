@@ -90,7 +90,7 @@ void runCompetition(const BfsInput &bfsInput, const int &nTrials, const int &bs,
     std::cout << "\n";
 
     log("Sequential.ImplicitVisited trials started");
-    auto bfsImplicit = SequentialBfsSuccinctVisited();
+    auto bfsImplicit = SequentialBfsImplicitVisited();
     PSeq<RunResult> bfsImplicitResults = runOnInstance("Sequential.ImplicitVisited", bfsImplicit, bfsInput,
                                                        nTrials, bfsInput.first.matrix.size());
     std::cout << "\n";
@@ -101,7 +101,7 @@ void runCompetition(const BfsInput &bfsInput, const int &nTrials, const int &bs,
     std::cout << "\n";
 
     log("Parallel2 trials started");
-    auto parallel2 = ParallelBfs(bs);
+    auto parallel2 = ParallelBfs2(bs);
     PSeq<RunResult> parallelResults2 = runOnInstance("ParallelBfs2", parallel2, bfsInput, nTrials, bs);
     std::cout << "\n";
 
@@ -161,7 +161,7 @@ void benchmarks() {
               [&](GraphBuilder &g) {
                   buildWithEdgeProbability(g, 3 * std::log(g.sz) / static_cast<double>(g.sz));
                   computeDegree(g);
-              }, "Graph: P(edge) = 3* log(n)/n");
+              }, "Graph: P(edge) = 3 * log(n)/n");
 
     launchRun(nTrials, blockSize, *grBuilder,
               [&](GraphBuilder &g) {
@@ -173,13 +173,13 @@ void benchmarks() {
               [&](GraphBuilder &g) {
                   buildWithEdgeProbability(g, 1e6 * std::log(g.sz) / static_cast<double>(g.sz));
                   computeDegree(g);
-              }, "Graph: P(edge) = 10^6 * log(n)/n");
+              }, "Graph: P(edge) =  10^6 * log(n)/n");
 
     launchRun(nTrials, blockSize, *grBuilder,
               [&](GraphBuilder &g) {
                   buildWithEdgeProbability(g, 4 * 1e3 * std::sqrt(g.sz) / static_cast<double>(g.sz));
                   computeDegree(g);
-              }, "Graph: P(edge) = 10^4*sqrt(n)/n");
+              }, "Graph: P(edge) = 4 * 10^3 * sqrt(n)/n");
 
 
     launchRun(nTrials, blockSize, *grBuilder,
